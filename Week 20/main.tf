@@ -1,27 +1,29 @@
-# Configure the AWS provider
+#configure our provider
 provider "aws" {
-  region = "us-east-1"  
+  region     = "us-east-1"
+  access_key = ""
+  secret_key = ""
 }
 
-# Create a security group for SSH and Jenkins
+# SG's 
 resource "aws_security_group" "jenkins" {
   name        = "jenkins-security-group"
   description = "Security group for our Jenkins Server"
-  
+  vpc_id      = aws_vpc.jenkins_server.id
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  
+    cidr_blocks = ["0.0.0.0/0"]
   }
-  
+
   ingress {
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -30,27 +32,77 @@ resource "aws_security_group" "jenkins" {
   }
 }
 
-# Create an EC2 instance
-resource "aws_instance" "jenkins" {
-  ami                    = "ami-0bef6cc322bfff646"  # Replace with desired AMI ID
-  instance_type          = "t2.micro"
-  security_group_ids     = [aws_security_group.jenkins.id]
-  associate_public_ip_address = true
-  key_name               = "Week20"  # Replace with your key pair name
-
-  user_data = <<-EOF
-              #!/bin/bash
-              wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | sudo apt-key add -
-              sudo sh -c 'echo deb http://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
-              sudo apt-get update
-              sudo apt-get install -y openjdk-8-jdk jenkins
-              sudo systemctl enable jenkins
-              sudo systemctl start jenkins
-              EOF
+#VPC
+resource "aws_vpc" "jenkins_server" {
+  cidr_block = "10.0.0.0/16"
 }
 
-# Create an S3 bucket
+
+#Subnet
+resource "aws_subnet" "jenkins_server" {
+  vpc_id            = aws_vpc.jenkins_server.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-east-1a"
+}
+
+# Internet Gateway
+resource "aws_internet_gateway" "jenkins_gateway" {
+  vpc_id = aws_vpc.jenkins_server.id
+}
+
+# Route Table
+resource "aws_route_table" "jenkins_route_table" {
+  vpc_id = aws_vpc.jenkins_server.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.jenkins_gateway.id
+  }
+}
+
+# Subnet Association
+resource "aws_route_table_association" "jenkins_subnet_association" {
+  subnet_id      = aws_subnet.jenkins_server.id
+  route_table_id = aws_route_table.jenkins_route_table.id
+}
+
+
+#EC2 instance
+resource "aws_instance" "jenkins" {
+  ami                         = "ami-0bef6cc322bfff646"
+  instance_type               = "t2.micro"
+  vpc_security_group_ids      = [aws_security_group.jenkins.id]
+  associate_public_ip_address = true
+  subnet_id                   = aws_subnet.jenkins_server.id
+  key_name                    = "Week20"
+
+
+
+  user_data = <<-EOF
+    #!/bin/bash
+    sudo su
+    sudo yum update -y
+    sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+    sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+    sudo yum upgrade -y
+    sudo yum install fontconfig java-11-openjdk
+    sudo amazon-linux-extras install java-openjdk11 -y
+    sudo yum install jenkins -y
+    sudo systemctl enable jenkins
+    sudo systemctl start jenkins
+    EOF
+
+}
+
+
+#S3 bucket
 resource "aws_s3_bucket" "jenkins_artifacts" {
-  bucket = "jenkins-artifacts-bucket-created-by-t3rmin4ls"
+  bucket = "jenkins-artifacts-bucket-created-by-raffaellooo"
   acl    = "private"
+}
+
+
+output "jenkins_public_dns" {
+  description = "The public DNS of the Jenkins EC2 instance"
+  value       = aws_instance.jenkins.public_dns
 }
